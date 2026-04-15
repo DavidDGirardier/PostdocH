@@ -1,0 +1,219 @@
+\documentclass[11pt]{article}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{bm}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+
+\newcommand{\avg}[1]{\langle #1 \rangle}
+\newcommand{\dd}{\mathrm{d}}
+\newcommand{\dt}{\Delta t}
+
+\title{Non-stationary memory kernel extraction\\via multi-origin least squares}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+%% ============================================================
+\section{Generalized Langevin equation}
+%% ============================================================
+
+We consider a collective variable $q$ whose dynamics obey the generalized Langevin equation (GLE)
+\begin{equation}\label{eq:gle}
+  \dot v(t) = F\bigl(q(t)\bigr)
+    - \int_0^{t} K(t-s)\,v(s)\,\dd s
+    + \eta(t),
+\end{equation}
+where $v = \dot q$, $F(q)$ is the mean force (potential of mean force derivative),
+$K(t)$ is the memory kernel, and $\eta(t)$ is the projected noise.
+The integral runs from the initial time $t=0$ of the trajectory.
+
+%% ============================================================
+\section{Non-stationary Volterra equation}
+%% ============================================================
+
+Multiplying Eq.~\eqref{eq:gle} evaluated at time $t_0 + \tau$ by $v(t_0)$
+and taking the ensemble average over independent trajectories yields
+\begin{equation}\label{eq:volterra_full}
+  \avg{v(t_0)\,\dot v(t_0+\tau)}
+  = \avg{v(t_0)\,F\bigl(q(t_0+\tau)\bigr)}
+  - \int_0^{t_0+\tau} K(t_0+\tau-s)\,\avg{v(t_0)\,v(s)}\,\dd s
+  + \avg{v(t_0)\,\eta(t_0+\tau)}.
+\end{equation}
+For a cold start of the auxiliary (bath) variables ($s(0)=0$) and recording
+the deterministic acceleration $a_{\mathrm{det}} = F - \gamma s$ without the
+stochastic noise, the noise--velocity correlation vanishes:
+$\avg{v(t_0)\,\eta(t_0+\tau)} = 0$ for all $t_0 \geq 0$.
+
+Defining the orthogonal correlation
+\begin{equation}
+  C_{\perp}(t_0,\tau)
+  \;=\; \avg{v(t_0)\bigl[a_{\mathrm{det}}(t_0+\tau) - F(q(t_0+\tau))\bigr]},
+\end{equation}
+we obtain the \textbf{exact} relation
+\begin{equation}\label{eq:volterra_exact}
+  \boxed{
+  C_{\perp}(t_0,\tau)
+  = -\int_0^{t_0+\tau} K(s)\;\avg{v(t_0)\,v(t_0+\tau-s)}\;\dd s.
+  }
+\end{equation}
+Note that the integral runs from $0$ to $t_0+\tau$, \emph{not} from $0$ to $\tau$.
+This is the key point: the memory of the system extends back to the true initial time.
+
+%% ============================================================
+\section{Standard approach: single time origin}
+%% ============================================================
+
+At $t_0 = 0$, Eq.~\eqref{eq:volterra_exact} reduces to the standard
+Volterra equation of the first kind:
+\begin{equation}\label{eq:volterra_t0}
+  C_{\perp}(0,\tau)
+  = -\int_0^{\tau} K(s)\;C_{vv}(\tau-s)\;\dd s,
+\end{equation}
+where $C_{vv}(\tau) = \avg{v(0)\,v(\tau)}$ is the non-stationary velocity
+autocorrelation.  This can be solved sequentially (rectangular or trapezoidal
+rule) or by differentiating to obtain a better-conditioned second-kind equation.
+
+\paragraph{Limitation.}
+Only data at $t_0 = 0$ is used.  With $N$ independent trajectories,
+the statistical noise in the correlation functions scales as $N^{-1/2}$.
+Using additional time origins $t_0 > 0$ could reduce the variance, but
+naively slicing the trajectory and applying Eq.~\eqref{eq:volterra_t0}
+from the new ``$t=0$'' ignores the pre-memory integral from $\tau$ to
+$t_0+\tau$, yielding incorrect kernels.
+
+%% ============================================================
+\section{Multi-origin least-squares formulation}
+%% ============================================================
+
+We discretize time as $t_n = n\,\dt$ and write the kernel as
+$K_j = K(j\,\dt)$ for $j = 0, 1, \ldots, n_K - 1$.
+Eq.~\eqref{eq:volterra_exact} at origin $t_0$ and lag $\tau$ becomes
+\begin{equation}\label{eq:discrete}
+  G_{t_0,\tau}
+  = -\dt \sum_{j=0}^{j_{\max}-1} K_j \; A_{t_0,\tau,j},
+\end{equation}
+where
+\begin{align}
+  G_{t_0,\tau}
+    &= \avg{v(t_0)\;\bigl[a_{\mathrm{det}}(t_0{+}\tau) - F(q(t_0{+}\tau))\bigr]},
+    \label{eq:G}\\[4pt]
+  A_{t_0,\tau,j}
+    &= \avg{v(t_0)\;v(t_0{+}\tau{-}j\,\dt)},
+    \label{eq:A}\\[4pt]
+  j_{\max}
+    &= \min\!\bigl(n_K,\; t_0{+}\tau{+}1\bigr).
+    \label{eq:jmax}
+\end{align}
+Crucially, $j$ ranges up to $t_0 + \tau$ (capped at $n_K$), so the velocity
+correlations reach back to $v(0)$---the full pre-memory is included.
+
+\subsection{Building the linear system}
+
+For each time origin $t_0 = 0, \dt, \ldots, t_0^{\max}$ and each lag
+$\tau = \dt, 2\dt, \ldots, \tau^{\max}$ (subject to $t_0 + \tau < n_K$),
+Eq.~\eqref{eq:discrete} provides one linear equation in the unknowns
+$\bm{K} = (K_0, K_1, \ldots, K_{n_K-1})^\top$.
+
+Stacking all equations:
+\begin{equation}\label{eq:linsys}
+  \bm{G} = -\dt\;\bm{A}\;\bm{K},
+\end{equation}
+where $\bm{G} \in \mathbb{R}^M$ is the vector of measured left-hand sides,
+$\bm{A} \in \mathbb{R}^{M \times n_K}$ is the matrix of velocity correlations,
+and $M \gg n_K$ (overdetermined system).
+
+\subsection{Tikhonov-regularized solution}
+
+We solve Eq.~\eqref{eq:linsys} by minimizing the regularized residual
+\begin{equation}
+  \bm{K}^*
+  = \arg\min_{\bm{K}}
+    \Bigl\{
+      \bigl\|\bm{A}\bm{K} + \bm{G}/\dt\bigr\|^2
+      + \lambda\,\|\bm{K}\|^2
+    \Bigr\},
+\end{equation}
+with Tikhonov parameter $\lambda = 10^{-5} \max_j (\bm{A}^\top\bm{A})_{jj}$.
+The closed-form solution is
+\begin{equation}\label{eq:solution}
+  \boxed{
+  \bm{K}^*
+  = \bigl(\bm{A}^\top\bm{A} + \lambda\,\bm{I}\bigr)^{-1}
+    \bm{A}^\top\bigl(-\bm{G}/\dt\bigr).
+  }
+\end{equation}
+
+%% ============================================================
+\section{Why the standard Volterra at $t_0 > 0$ fails}
+%% ============================================================
+
+Slicing the trajectory at frame $t_0$ and applying the standard Volterra
+solver implicitly assumes
+\begin{equation}\label{eq:wrong}
+  C_{\perp}(t_0,\tau)
+  \stackrel{?}{=} -\int_0^{\tau} K(s)\;\avg{v(t_0)\,v(t_0+\tau-s)}\;\dd s.
+\end{equation}
+Comparing with the exact relation~\eqref{eq:volterra_exact}, the missing
+\emph{pre-memory} term is
+\begin{equation}
+  \mathcal{P}(t_0,\tau)
+  = -\int_{\tau}^{t_0+\tau} K(s)\;\avg{v(t_0)\,v(t_0+\tau-s)}\;\dd s,
+\end{equation}
+which involves $\avg{v(t_0)\,v(k)}$ for $k < t_0$---the velocity
+correlations reaching \emph{before} the time origin.  This term is generally
+nonzero and, if neglected, corrupts the extracted kernel.
+
+The LSQ formulation avoids this entirely: by setting
+$j_{\max} = \min(n_K, t_0+\tau+1)$, each row of $\bm{A}$ automatically
+includes the pre-memory correlations.
+
+%% ============================================================
+\section{Algorithm summary}
+%% ============================================================
+
+\begin{algorithm}[H]
+\caption{Multi-origin least-squares kernel extraction}
+\begin{algorithmic}[1]
+\REQUIRE Trajectories $\{q^{(n)}(t),\, v^{(n)}(t),\, a_{\mathrm{det}}^{(n)}(t)\}_{n=1}^N$,
+         mean force $F(q)$, timestep $\dt$, kernel length $n_K$,
+         max origin $t_0^{\max}$, max lag $\tau^{\max}$
+\STATE Compute $a_{\perp}^{(n)}(t) = a_{\mathrm{det}}^{(n)}(t) - F\bigl(q^{(n)}(t)\bigr)$
+       for all $n$, $t$
+\FOR{$t_0 = 0,\, \dt,\, \ldots,\, t_0^{\max}$}
+  \STATE $\tilde v_{t_0}^{(n)} = v^{(n)}(t_0) - \overline{v(t_0)}$
+         \hfill\COMMENT{center initial velocity}
+  \STATE $\tau_{\mathrm{end}} = \min(\tau^{\max},\; n_K - t_0 - 1)$
+  \FOR{$\tau = \dt,\, 2\dt,\, \ldots,\, \tau_{\mathrm{end}}$}
+    \STATE $G \leftarrow \frac{1}{N}\sum_n \tilde v_{t_0}^{(n)}\; a_{\perp}^{(n)}(t_0+\tau)$
+    \STATE $j_{\max} \leftarrow \min(n_K,\; t_0 + \tau + 1)$
+    \FOR{$j = 0, 1, \ldots, j_{\max}-1$}
+      \STATE $A_j \leftarrow \frac{1}{N}\sum_n \tilde v_{t_0}^{(n)}\; v^{(n)}(t_0+\tau - j\,\dt)$
+    \ENDFOR
+    \STATE Append row $(G,\; \dt\,A_0,\; \dt\,A_1,\;\ldots)$ to the linear system
+  \ENDFOR
+\ENDFOR
+\STATE Solve $\bm{K}^* = (\bm{A}^\top\bm{A} + \lambda\bm{I})^{-1}\bm{A}^\top(-\bm{G})$
+\RETURN $K_j^* = K(j\,\dt)$ for $j = 0, \ldots, n_K - 1$
+\end{algorithmic}
+\end{algorithm}
+
+%% ============================================================
+\section{Comparison of approaches}
+%% ============================================================
+
+\begin{center}
+\begin{tabular}{l c c c}
+\hline
+Method & \# equations & Pre-memory & Error propagation \\
+\hline
+Volterra $t_0=0$ & $\sim\tau^{\max}$ & not needed & sequential \\
+Avg.\ Volterra $t_0=0\ldots T$ & $\sim\tau^{\max}$ per $t_0$ & needs $K$ estimate & accumulates \\
+LSQ $t_0=0\ldots T$ & $\sim T \times \tau^{\max}$ & built-in & none (single solve) \\
+\hline
+\end{tabular}
+\end{center}
+
+\end{document}
