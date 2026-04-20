@@ -125,26 +125,44 @@ where $\bm{G} \in \mathbb{R}^M$ is the vector of measured left-hand sides,
 $\bm{A} \in \mathbb{R}^{M \times n_K}$ is the matrix of velocity correlations,
 and $M \gg n_K$ (overdetermined system).
 
-\subsection{Tikhonov-regularized solution}
+\subsection{Smoothness-regularized solution}
 
-We solve Eq.~\eqref{eq:linsys} by minimizing the regularized residual
+Adjacent columns of $\bm{A}$ are highly correlated: column~$j$ contains
+$\avg{v(t_0)\,v(t_0{+}\tau{-}j\,\dt)}$ while column~$j{+}1$ contains
+the same correlation shifted by one timestep.
+Standard (zeroth-order) Tikhonov regularization $\lambda\|\bm{K}\|^2$
+penalizes the \emph{magnitude} of the kernel, systematically shrinking
+$K(0)$ toward zero.
+
+Instead, we use first-order Tikhonov regularization, penalizing the
+roughness of the kernel:
 \begin{equation}
   \bm{K}^*
   = \arg\min_{\bm{K}}
     \Bigl\{
       \bigl\|\bm{A}\bm{K} + \bm{G}/\dt\bigr\|^2
-      + \lambda\,\|\bm{K}\|^2
+      + \lambda\,\|\bm{D}\bm{K}\|^2
     \Bigr\},
 \end{equation}
-with Tikhonov parameter $\lambda = 10^{-5} \max_j (\bm{A}^\top\bm{A})_{jj}$.
+where $\bm{D}$ is the $(n_K{-}1) \times n_K$ first-difference matrix,
+$(\bm{D}\bm{K})_i = K_{i+1} - K_i$.
+This encourages a smooth kernel without shrinking its magnitude.
 The closed-form solution is
 \begin{equation}\label{eq:solution}
   \boxed{
   \bm{K}^*
-  = \bigl(\bm{A}^\top\bm{A} + \lambda\,\bm{I}\bigr)^{-1}
+  = \bigl(\bm{A}^\top\bm{A} + \lambda\,\bm{D}^\top\bm{D}\bigr)^{-1}
     \bm{A}^\top\bigl(-\bm{G}/\dt\bigr).
   }
 \end{equation}
+
+\paragraph{Automatic parameter selection.}
+The regularization parameter $\lambda$ is selected by L-curve corner
+detection: the curve $\bigl(\log\|\bm{A}\bm{K}_\lambda + \bm{G}/\dt\|^2,\;
+\log\|\bm{D}\bm{K}_\lambda\|^2\bigr)$ is computed on a log-spaced grid
+of~$\lambda$ values, and the point of maximum curvature is chosen.
+This balances the data fidelity (residual) against the smoothness penalty
+without requiring knowledge of the noise level.
 
 %% ============================================================
 \section{Why the standard Volterra at $t_0 > 0$ fails}
@@ -192,10 +210,13 @@ includes the pre-memory correlations.
     \FOR{$j = 0, 1, \ldots, j_{\max}-1$}
       \STATE $A_j \leftarrow \frac{1}{N}\sum_n \tilde v_{t_0}^{(n)}\; v^{(n)}(t_0+\tau - j\,\dt)$
     \ENDFOR
+    \STATE $A_0 \leftarrow A_0/2$;\; $A_{j_{\max}-1} \leftarrow A_{j_{\max}-1}/2$
+           \hfill\COMMENT{trapezoidal rule}
     \STATE Append row $(G,\; \dt\,A_0,\; \dt\,A_1,\;\ldots)$ to the linear system
   \ENDFOR
 \ENDFOR
-\STATE Solve $\bm{K}^* = (\bm{A}^\top\bm{A} + \lambda\bm{I})^{-1}\bm{A}^\top(-\bm{G})$
+\STATE Select $\lambda$ by L-curve corner detection
+\STATE Solve $\bm{K}^* = (\bm{A}^\top\bm{A} + \lambda\,\bm{D}^\top\bm{D})^{-1}\bm{A}^\top(-\bm{G})$
 \RETURN $K_j^* = K(j\,\dt)$ for $j = 0, \ldots, n_K - 1$
 \end{algorithmic}
 \end{algorithm}
@@ -212,6 +233,91 @@ Method & \# equations & Pre-memory & Error propagation \\
 Volterra $t_0=0$ & $\sim\tau^{\max}$ & not needed & sequential \\
 Avg.\ Volterra $t_0=0\ldots T$ & $\sim\tau^{\max}$ per $t_0$ & needs $K$ estimate & accumulates \\
 LSQ $t_0=0\ldots T$ & $\sim T \times \tau^{\max}$ & built-in & none (single solve) \\
+\hline
+\end{tabular}
+\end{center}
+
+%% ============================================================
+\section{Validation results}
+%% ============================================================
+
+We validate on the 1D harmonic GLE with exponential kernel
+$K(t) = \gamma\,e^{-t/\tau}$, $\gamma = 10$, $\tau = 0.1$,
+$k = -4$, $k_BT = 1$, $\dt = 0.001$, using $N = 10{,}000$
+cold-start trajectories.
+
+\subsection{Equilibrium accuracy}
+
+\begin{center}
+\begin{tabular}{l c c}
+\hline
+Method & Relative $L^2$ error & $K(0)$ (true: 10.0) \\
+\hline
+Volterra $t_0=0$           & 0.4\% & 10.0 \\
+LSQ $t_0=0$                & 0.5\% & 9.9 \\
+LSQ $t_0 \leq 0.1$         & 0.6\% & 9.9 \\
+\hline
+\end{tabular}
+\end{center}
+
+All methods recover the kernel accurately at the sub-percent level.
+The remaining error is dominated by the time discretization $O(\dt)$.
+The cumulative integral $\int_0^t K(s)\,\dd s$ (friction coefficient) is
+recovered accurately by all methods.
+
+\subsection{Out-of-equilibrium independence}
+
+The kernel $K(t)$ is a bath property and must be independent of the initial
+displacement~$x_0$.  We verify this by extracting $K$ from trajectories
+starting at $x_0 = 0$ (equilibrium) and $x_0 = 2$ (displaced by $4\sigma$
+from the harmonic minimum).
+With the LSQ multi-$t_0$ formulation, the relative difference between the
+two extracted kernels is $< 10^{-12}$, confirming exact independence.
+
+\subsection{Requirements}
+
+The method requires \textbf{cold-start auxiliary variables} ($s(0) = 0$
+in the OU model for colored noise).
+This ensures that $a_{\mathrm{det}} - F = -\gamma\,s$ equals the memory
+integral from time zero.
+If the auxiliary starts in equilibrium ($s(0) \neq 0$), an unaccounted
+transient $\gamma\,s(0)\,e^{-t/\tau}$ corrupts the extraction.
+
+In practice, this corresponds to launching fresh MD trajectories
+from a configuration where the bath has been equilibrated at the
+restrained CV position.
+The memory integral then naturally starts from zero at the trajectory
+start, which is the cold-start condition.
+
+%% ============================================================
+\section{Regularization and quadrature}
+%% ============================================================
+
+Two improvements over a naive implementation are critical for accuracy:
+
+\paragraph{Smoothness penalty.}
+Standard (zeroth-order) Tikhonov regularization $\lambda\|\bm{K}\|^2$
+penalizes the magnitude of the kernel, systematically shrinking $K(0)$
+toward zero.  First-order regularization $\lambda\|\bm{D}\bm{K}\|^2$
+penalizes roughness instead, which is physically appropriate for smooth
+memory kernels.
+
+\paragraph{Trapezoidal quadrature.}
+Adjacent columns of $\bm{A}$ are nearly collinear because
+$\avg{v(t_0)\,v(t_0{+}\tau{-}j\dt)}$ and
+$\avg{v(t_0)\,v(t_0{+}\tau{-}(j{+}1)\dt)}$ differ by only one timestep
+in the lag.  Using the trapezoidal rule (half-weight at the integration
+endpoints $j=0$ and $j=j_{\max}{-}1$) breaks this degeneracy and allows
+$K_0$ to be properly determined.
+
+\begin{center}
+\begin{tabular}{l l c c}
+\hline
+Quadrature & Penalty & Error & $K(0)$ \\
+\hline
+Rectangular & $\lambda\|\bm{K}\|^2$       & 7.9\% & 5.5 \\
+Rectangular & $\lambda\|\bm{D}\bm{K}\|^2$ & 4.3\% & 8.5 \\
+Trapezoidal & $\lambda\|\bm{D}\bm{K}\|^2$ & 0.6\% & 9.9 \\
 \hline
 \end{tabular}
 \end{center}

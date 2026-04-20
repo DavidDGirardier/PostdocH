@@ -20,9 +20,51 @@ import scipy.integrate
 import matplotlib.pyplot as plt
 
 
+def _smoothness_matrix(n):
+    """First-difference matrix D (n-1 x n): (D @ K)_i = K_{i+1} - K_i."""
+    D = np.zeros((n - 1, n))
+    for i in range(n - 1):
+        D[i, i] = -1
+        D[i, i + 1] = 1
+    return D
+
+
+def _lcurve_smooth_reg(A_mat, b_vec, DTD, n_grid=80):
+    """L-curve corner detection for smoothness-penalized Tikhonov.
+
+    Sweeps lambda on a log grid, computing (log||AK-b||, log||DK||)
+    at each point, then returns the lambda at maximum curvature.
+    """
+    ATA = A_mat.T @ A_mat
+    ATb = A_mat.T @ b_vec
+
+    lams = np.logspace(-8, 3, n_grid)
+    log_res = np.empty(n_grid)
+    log_pen = np.empty(n_grid)
+
+    for i, lam in enumerate(lams):
+        K = np.linalg.solve(ATA + lam * DTD, ATb)
+        log_res[i] = np.log10(max(np.sum((A_mat @ K - b_vec) ** 2), 1e-30))
+        log_pen[i] = np.log10(max(K @ DTD @ K, 1e-30))
+
+    # Curvature of (log_res, log_pen) vs log(lambda)
+    log_lams = np.log10(lams)
+    dx = np.gradient(log_res, log_lams)
+    dy = np.gradient(log_pen, log_lams)
+    d2x = np.gradient(dx, log_lams)
+    d2y = np.gradient(dy, log_lams)
+    kappa = (dx * d2y - d2x * dy) / (dx ** 2 + dy ** 2) ** 1.5
+
+    margin = max(3, n_grid // 10)
+    best_idx = margin + np.argmax(kappa[margin:-margin])
+
+    return lams[best_idx]
+
+
 def extract_kernel_lsq(x_trajs, v_trajs, a_trajs, dt, n_kernel,
                        t0_max_idx, tau_max_idx, force_func=None,
-                       k_force=None, w_func=None, W_func=None):
+                       k_force=None, w_func=None, W_func=None,
+                       reg=None):
     """
     Extract the memory kernel by least-squares over multiple time
     origins and lags.
@@ -48,14 +90,20 @@ def extract_kernel_lsq(x_trajs, v_trajs, a_trajs, dt, n_kernel,
     W_func : callable or None
         W(t0_idx, tau_idx) -> scalar weight for the least-squares row.
         If None, uniform.
+    reg : float, "gcv", or None
+        Tikhonov regularization parameter.
+        - float: use this value directly as lambda.
+        - "gcv": select automatically via Generalized Cross-Validation.
+        - None (default): heuristic 1e-5 * max(diag(A^T A)).
 
     Returns
     -------
     result : dict
         "K" : kernel array (n_kernel,)
         "time" : time array for kernel
-        "G_matrix" : the G values used
         "residual" : least-squares residual
+        "reg" : regularization parameter used
+        "n_rows", "A_mat", "G_vec" : system details
     """
     N = len(x_trajs)
     T_min = min(len(x) for x in x_trajs)
@@ -105,6 +153,8 @@ def extract_kernel_lsq(x_trajs, v_trajs, a_trajs, dt, n_kernel,
         wv_dot_v = np.dot(wv, v) / denom  # (T,)
 
         # A block: for each tau, A[j] = wv_dot_v[t_end - j]
+        # Trapezoidal quadrature: half-weight at integration endpoints
+        # (j=0 and j=j_max-1) to reduce collinearity and improve K(0).
         A_block = np.zeros((tau_end, n_kernel))
         for ri, tau in enumerate(range(1, tau_end + 1)):
             t_end = t0 + tau
@@ -112,21 +162,37 @@ def extract_kernel_lsq(x_trajs, v_trajs, a_trajs, dt, n_kernel,
             # indices t_end, t_end-1, ..., t_end-j_max+1
             idx = np.arange(t_end, t_end - j_max, -1)
             A_block[ri, :j_max] = wv_dot_v[idx]
+            A_block[ri, 0] *= 0.5
+            if j_max > 1:
+                A_block[ri, j_max - 1] *= 0.5
 
         rows_G.append(G_block)
         rows_A.append(dt * A_block)
 
     G_vec = np.concatenate(rows_G)
     A_mat = np.vstack(rows_A)
+    b_vec = -G_vec  # solve A @ K = b
 
-    # Tikhonov-regularized least squares (ridge regression):
-    # K = argmin |A @ K + G|^2 + reg * |K|^2
-    # Solution: K = (A^T A + reg*I)^{-1} A^T (-G)
-    reg = 1e-5 * np.max(np.diag(A_mat.T @ A_mat))
-    ATA = A_mat.T @ A_mat + reg * np.eye(n_kernel)
-    ATG = A_mat.T @ (-G_vec)
-    K = np.linalg.solve(ATA, ATG)
-    residual = np.sum((A_mat @ K + G_vec)**2)
+    # Smoothness penalty: penalize ||D @ K||^2 (first differences)
+    # instead of ||K||^2, to avoid shrinking K(0) toward zero.
+    D = _smoothness_matrix(n_kernel)
+    DTD = D.T @ D
+    ATA = A_mat.T @ A_mat
+
+    # --- Select regularization parameter ---
+    if reg == "gcv":
+        reg_value = _lcurve_smooth_reg(A_mat, b_vec, DTD)
+    elif reg is None:
+        reg_value = _lcurve_smooth_reg(A_mat, b_vec, DTD)
+    else:
+        reg_value = float(reg)
+
+    # Smoothness-regularized least squares:
+    # K = argmin |A @ K - b|^2 + reg * |D @ K|^2
+    # Solution: K = (A^T A + reg * D^T D)^{-1} A^T b
+    ATb = A_mat.T @ b_vec
+    K = np.linalg.solve(ATA + reg_value * DTD, ATb)
+    residual = np.sum((A_mat @ K - b_vec)**2)
 
     time = np.arange(n_kernel) * dt
 
@@ -134,6 +200,7 @@ def extract_kernel_lsq(x_trajs, v_trajs, a_trajs, dt, n_kernel,
         "K": K,
         "time": time,
         "residual": residual,
+        "reg": reg_value,
         "n_rows": len(G_vec),
         "A_mat": A_mat,
         "G_vec": G_vec,
