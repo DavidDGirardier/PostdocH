@@ -20,8 +20,13 @@ from benchmark_fd_acceleration import generate_1d_gle_all_accels
 def extract_kernel_prony(x_trajs, v_trajs, a_trajs, dt,
                          t0_max_idx, tau_max_idx, n_kernel=500,
                          k_force=None, force_func=None,
-                         n_exp=2, p0=None):
-    """Extract Prony-parameterized kernel via nonlinear least squares."""
+                         n_exp=2, p0=None, tau_bounds=None):
+    """Extract Prony-parameterized kernel via nonlinear least squares.
+
+    tau_bounds : (tau_min, tau_max) or None
+        Hard bounds on each exponential's time constant (same units as dt).
+        Default None → permissive bounds [exp(-10), exp(5)].
+    """
     res_free = extract_kernel_lsq(
         x_trajs, v_trajs, a_trajs, dt,
         n_kernel=n_kernel, t0_max_idx=t0_max_idx,
@@ -46,9 +51,20 @@ def extract_kernel_prony(x_trajs, v_trajs, a_trajs, dt,
         elif n_exp == 3:
             p0 = [3.0, np.log(0.02), 3.0, np.log(0.08), 3.0, np.log(0.2)]
 
+    if tau_bounds is None:
+        log_tau_lo, log_tau_hi = -10.0, 5.0
+    else:
+        log_tau_lo = np.log(tau_bounds[0])
+        log_tau_hi = np.log(tau_bounds[1])
+        # Ensure p0 is inside bounds
+        for k in range(n_exp):
+            if p0[2*k+1] < log_tau_lo or p0[2*k+1] > log_tau_hi:
+                p0 = list(p0)
+                p0[2*k+1] = 0.5 * (log_tau_lo + log_tau_hi)
+
     result = scipy.optimize.least_squares(
         residuals, p0, method='trf',
-        bounds=([0, -10] * n_exp, [1000, 5] * n_exp),
+        bounds=([0, log_tau_lo] * n_exp, [1000, log_tau_hi] * n_exp),
         max_nfev=5000, verbose=0)
 
     amps = result.x[0::2]

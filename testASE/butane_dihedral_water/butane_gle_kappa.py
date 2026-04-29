@@ -163,7 +163,8 @@ if __name__ == '__main__':
     res = extract_kernel_prony(
         x_sub, v_sub, a_sub, dt_e,
         t0_max_idx=0, tau_max_idx=tm,
-        force_func=force_full, n_exp=2, n_kernel=nk)
+        force_func=force_full, n_exp=2, n_kernel=nk,
+        tau_bounds=(0.005, 0.5))  # cap each τ in [5 fs, 500 fs]
     amps = np.array(res['amps'])
     taus = np.array(res['taus'])
     for i, (a, t) in enumerate(zip(amps, taus)):
