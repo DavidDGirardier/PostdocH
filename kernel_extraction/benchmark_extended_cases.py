@@ -133,10 +133,10 @@ def generate_gle_arbitrary(K_array, dt, kBT, nsteps, N_trajs,
 
     # Precompute noise with correct correlation structure
     # For FDT: <η(t)η(t')> = kBT K(|t-t'|)
-    # Generate via Cholesky of the correlation matrix (expensive but correct)
-    # For large nsteps, use circulant embedding
     n_noise = min(nsteps, 2000)
-    K_corr = kBT * K_array[:n_noise]
+    K_corr = np.zeros(n_noise)
+    n_use = min(n_noise, len(K_array))
+    K_corr[:n_use] = kBT * K_array[:n_use]
     # Use approximate method: filter white noise through sqrt(spectrum)
     nfft = 2 ** int(np.ceil(np.log2(2 * n_noise)))
     K_padded = np.zeros(nfft)
