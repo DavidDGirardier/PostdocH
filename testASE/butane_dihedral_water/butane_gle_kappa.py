@@ -231,8 +231,16 @@ if __name__ == '__main__':
     if args.method == 'prony2':
         dt_gle = min(0.0005, 0.1 * float(taus.min()))
     else:
-        # GLE step must match the kernel grid for direct convolution
-        dt_gle = dt_e
+        # Use a fine GLE step and interpolate K onto that grid
+        dt_gle = 0.001  # 1 fs — well below ω_b period (~260 fs)
+        from numpy import interp
+        n_k_orig = len(K_array)
+        t_orig = np.arange(n_k_orig) * dt_e
+        n_k_new = int(round(t_orig[-1] / dt_gle)) + 1
+        t_new = np.arange(n_k_new) * dt_gle
+        K_array = np.interp(t_new, t_orig, K_array)
+        print(f"  Interpolated K to dt_gle={dt_gle*1000:.1f} fs "
+              f"({n_k_orig}→{n_k_new} pts)")
     nsteps = int(T_total / dt_gle) + 1
     print(f"\nGLE: N={N_traj}, T={T_total} ps, dt={dt_gle*1000:.2f} fs, "
           f"nsteps={nsteps}")
