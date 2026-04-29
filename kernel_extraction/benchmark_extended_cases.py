@@ -137,8 +137,8 @@ def generate_gle_arbitrary(K_array, dt, kBT, nsteps, N_trajs,
     K_corr = np.zeros(n_noise)
     n_use = min(n_noise, len(K_array))
     K_corr[:n_use] = kBT * K_array[:n_use]
-    # Use approximate method: filter white noise through sqrt(spectrum)
-    nfft = 2 ** int(np.ceil(np.log2(2 * n_noise)))
+    # nfft must be ≥ nsteps so we have enough noise samples
+    nfft = 2 ** int(np.ceil(np.log2(max(2 * n_noise, nsteps))))
     K_padded = np.zeros(nfft)
     K_padded[:n_noise] = K_corr
     K_padded[nfft-n_noise+1:] = K_corr[1:][::-1]  # symmetric
