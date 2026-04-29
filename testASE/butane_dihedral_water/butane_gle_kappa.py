@@ -117,7 +117,22 @@ def grote_hynes_kappa(omega_b, amps, taus):
 # ── Main ──────────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--n-traj-fit', type=int, default=None,
+                        help='Subsample N MD trajectories for Prony fit '
+                             '(default: use all)')
+    args = parser.parse_args()
+
     phi_list, phidot_list, ddot_list, dt_md, phi_b = load_shooting_data()
+
+    if args.n_traj_fit is not None and args.n_traj_fit < len(phi_list):
+        rng_sub = np.random.default_rng(0)
+        idx = rng_sub.choice(len(phi_list), args.n_traj_fit, replace=False)
+        phi_list = [phi_list[i] for i in idx]
+        phidot_list = [phidot_list[i] for i in idx]
+        ddot_list = [ddot_list[i] for i in idx]
+        print(f"Subsampled to {len(phi_list)} trajectories for fitting")
 
     cs_force = compute_mean_force(phi_list, ddot_list)
     force_full = lambda x: cs_force(x)
@@ -159,8 +174,21 @@ if __name__ == '__main__':
     kap_gh = grote_hynes_kappa(omega_b, amps, taus)
     print(f"κ_GH (2-exp) = {kap_gh:.3f}")
 
-    # κ_RF (read from butane_rf_vs_kernel.py output)
-    kap_rf = 0.250
+    # κ_RF: compute on the same subsample as the kernel fit (apples-to-apples)
+    phi_md = np.array(phi_list)
+    pdot_md = np.array(phidot_list)
+    v0_md = pdot_md[:, 0]
+    abs_v0_md = np.mean(np.abs(v0_md))
+    Tmd = phi_md.shape[1]
+    kap_rf_t = np.zeros(Tmd)
+    for k in range(Tmd):
+        kap_rf_t[k] = 2 * np.mean(v0_md * (phi_md[:, k] > phi_b).astype(float)) / abs_v0_md
+    t_rf = np.arange(Tmd) * dt_md
+    plat_mask = (t_rf >= 3.0) & (t_rf <= 8.0)
+    if plat_mask.sum() < 5:
+        plat_mask = (t_rf >= 0.5 * t_rf[-1])
+    kap_rf = float(np.mean(kap_rf_t[plat_mask]))
+    print(f"κ_RF (same subsample, plateau) = {kap_rf:.3f}")
 
     # ── Run GLE simulations ───────────────────────────────────────────────
     N_traj = 5000
