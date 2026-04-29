@@ -28,7 +28,8 @@ import matplotlib.pyplot as plt
 sys.path.insert(0, os.path.join(os.path.dirname(__file__),
                                 '../../kernel_extraction'))
 from benchmark_prony_nlsq import extract_kernel_prony
-from benchmark_extended_cases import generate_gle_multiexp
+from benchmark_extended_cases import generate_gle_multiexp, generate_gle_arbitrary
+from nonstationary_kernel_lsq import extract_kernel_lsq
 
 SHOOT_DIR = os.path.join(os.path.dirname(__file__),
                          'gromacs_run/shooting_barrier')
@@ -114,6 +115,17 @@ def grote_hynes_kappa(omega_b, amps, taus):
     return lam_r / omega_b
 
 
+def grote_hynes_from_array(omega_b, K_arr, dt_k):
+    """κ_GH from a numeric kernel array via numerical Laplace transform."""
+    t = np.arange(len(K_arr)) * dt_k
+    def K_hat(s):
+        return float(np.trapz(K_arr * np.exp(-s * t), t))
+    def eq(lam):
+        return lam - omega_b**2 / (lam + K_hat(lam))
+    lam_r = scipy.optimize.brentq(eq, 1e-10, omega_b - 1e-10)
+    return lam_r / omega_b
+
+
 # ── Main ──────────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
@@ -122,6 +134,12 @@ if __name__ == '__main__':
     parser.add_argument('--n-traj-fit', type=int, default=None,
                         help='Subsample N MD trajectories for Prony fit '
                              '(default: use all)')
+    parser.add_argument('--method', choices=['prony2', 'free-lsq'],
+                        default='prony2',
+                        help='Kernel parameterization for the GLE '
+                             '(prony2 = 2 exp; free-lsq = numeric K(t))')
+    parser.add_argument('--lsq-trunc-fs', type=float, default=500.0,
+                        help='Truncation of free-LSQ kernel in fs')
     args = parser.parse_args()
 
     phi_list, phidot_list, ddot_list, dt_md, phi_b = load_shooting_data()
@@ -160,20 +178,36 @@ if __name__ == '__main__':
         a_s[0] = a_s[1]; a_s[-1] = a_s[-2]
         x_sub.append(phi_s); v_sub.append(jv_s); a_sub.append(a_s)
 
-    res = extract_kernel_prony(
-        x_sub, v_sub, a_sub, dt_e,
-        t0_max_idx=0, tau_max_idx=tm,
-        force_func=force_full, n_exp=2, n_kernel=nk,
-        tau_bounds=(0.005, 0.5))  # cap each τ in [5 fs, 500 fs]
-    amps = np.array(res['amps'])
-    taus = np.array(res['taus'])
-    for i, (a, t) in enumerate(zip(amps, taus)):
-        print(f"  Prony exp {i}: amp={a:.1f} rad²/ps², τ={t*1000:.0f} fs, "
-              f"γᵢ={a*t:.2f} rad/ps")
-    print(f"  γ_int_total = {np.sum(amps*taus):.2f} rad/ps")
-
-    kap_gh = grote_hynes_kappa(omega_b, amps, taus)
-    print(f"κ_GH (2-exp) = {kap_gh:.3f}")
+    if args.method == 'prony2':
+        res = extract_kernel_prony(
+            x_sub, v_sub, a_sub, dt_e,
+            t0_max_idx=0, tau_max_idx=tm,
+            force_func=force_full, n_exp=2, n_kernel=nk,
+            tau_bounds=(0.005, 0.5))
+        amps = np.array(res['amps'])
+        taus = np.array(res['taus'])
+        for i, (a, t) in enumerate(zip(amps, taus)):
+            print(f"  Prony exp {i}: amp={a:.1f}, τ={t*1000:.0f} fs, "
+                  f"γᵢ={a*t:.2f}")
+        print(f"  γ_int_total = {np.sum(amps*taus):.2f} rad/ps")
+        kap_gh = grote_hynes_kappa(omega_b, amps, taus)
+        K_array = res['K']
+    else:
+        # Free LSQ kernel — numeric K(t) used directly in the GLE
+        n_kernel_full = max(nk, int(args.lsq_trunc_fs / 1000.0 / dt_e))
+        res = extract_kernel_lsq(
+            x_sub, v_sub, a_sub, dt_e,
+            n_kernel=n_kernel_full, t0_max_idx=0, tau_max_idx=tm,
+            force_func=force_full)
+        K_array = res['K']
+        n_trunc = int(round(args.lsq_trunc_fs / 1000.0 / dt_e))
+        K_array = K_array[:n_trunc]
+        gamma_int = float(np.trapz(K_array, dx=dt_e))
+        print(f"  Free-LSQ kernel: K(0)={K_array[0]:.1f}, "
+              f"trunc={args.lsq_trunc_fs:.0f} fs ({n_trunc} pts), "
+              f"γ_int={gamma_int:.2f} rad/ps")
+        kap_gh = grote_hynes_from_array(omega_b, K_array, dt_e)
+    print(f"κ_GH = {kap_gh:.3f}")
 
     # κ_RF: compute on the same subsample as the kernel fit (apples-to-apples)
     phi_md = np.array(phi_list)
@@ -194,24 +228,35 @@ if __name__ == '__main__':
     # ── Run GLE simulations ───────────────────────────────────────────────
     N_traj = 5000
     T_total = 5.0  # ps
-    dt_gle = min(0.0005, 0.1 * float(taus.min()))
+    if args.method == 'prony2':
+        dt_gle = min(0.0005, 0.1 * float(taus.min()))
+    else:
+        # GLE step must match the kernel grid for direct convolution
+        dt_gle = dt_e
     nsteps = int(T_total / dt_gle) + 1
     print(f"\nGLE: N={N_traj}, T={T_total} ps, dt={dt_gle*1000:.2f} fs, "
           f"nsteps={nsteps}")
 
     force_harm = lambda x: omega_b**2 * (x - phi_b)
 
-    print("Running GLE with full anharmonic F(φ), 2-exp kernel...", flush=True)
-    rng = np.random.default_rng(42)
-    x_full, v_full = generate_gle_multiexp(
-        amps.tolist(), taus.tolist(), kBT_eff, dt_gle, nsteps, N_traj,
-        x0=phi_b, rng=rng, force=force_full)
-
-    print("Running GLE with parabolic F(φ), 2-exp kernel...", flush=True)
-    rng = np.random.default_rng(43)
-    x_harm, v_harm = generate_gle_multiexp(
-        amps.tolist(), taus.tolist(), kBT_eff, dt_gle, nsteps, N_traj,
-        x0=phi_b, rng=rng, force=force_harm)
+    if args.method == 'prony2':
+        print("Running GLE (2-exp kernel), full F(φ)...", flush=True)
+        x_full, v_full = generate_gle_multiexp(
+            amps.tolist(), taus.tolist(), kBT_eff, dt_gle, nsteps, N_traj,
+            x0=phi_b, rng=np.random.default_rng(42), force=force_full)
+        print("Running GLE (2-exp kernel), parabolic F(φ)...", flush=True)
+        x_harm, v_harm = generate_gle_multiexp(
+            amps.tolist(), taus.tolist(), kBT_eff, dt_gle, nsteps, N_traj,
+            x0=phi_b, rng=np.random.default_rng(43), force=force_harm)
+    else:
+        print("Running GLE (free-LSQ kernel), full F(φ)...", flush=True)
+        x_full, v_full = generate_gle_arbitrary(
+            K_array, dt_gle, kBT_eff, nsteps, N_traj,
+            x0=phi_b, rng=np.random.default_rng(42), force=force_full)
+        print("Running GLE (free-LSQ kernel), parabolic F(φ)...", flush=True)
+        x_harm, v_harm = generate_gle_arbitrary(
+            K_array, dt_gle, kBT_eff, nsteps, N_traj,
+            x0=phi_b, rng=np.random.default_rng(43), force=force_harm)
 
     # κ(t)
     # For harmonic case, "barrier" is at x0 = phi_b (the unstable max).
@@ -225,12 +270,18 @@ if __name__ == '__main__':
     print(f"\nκ_GLE_full (anharm)   = {plat_full:.3f}  vs κ_RF = {kap_rf:.3f}")
     print(f"κ_GLE_harm (parabolic) = {plat_harm:.3f}  vs κ_GH = {kap_gh:.3f}")
 
-    np.savez('butane_gle_kappa.npz',
-             t=t_gle, kappa_full=kap_full, kappa_harm=kap_harm,
-             omega_b=omega_b, amps=amps, taus=taus, kBT=kBT_eff,
-             phi_barrier=phi_b,
-             plateau_full=plat_full, plateau_harm=plat_harm,
-             kap_rf=kap_rf, kap_gh=kap_gh)
+    save_kw = dict(
+        t=t_gle, kappa_full=kap_full, kappa_harm=kap_harm,
+        omega_b=omega_b, kBT=kBT_eff, phi_barrier=phi_b,
+        plateau_full=plat_full, plateau_harm=plat_harm,
+        kap_rf=kap_rf, kap_gh=kap_gh, method=args.method)
+    if args.method == 'prony2':
+        save_kw['amps'] = amps
+        save_kw['taus'] = taus
+    else:
+        save_kw['K_array'] = K_array
+        save_kw['dt_kernel'] = dt_e
+    np.savez('butane_gle_kappa.npz', **save_kw)
 
     # ── Figure ─────────────────────────────────────────────────────────────
     fig, axes = plt.subplots(1, 2, figsize=(13, 5), constrained_layout=True)
