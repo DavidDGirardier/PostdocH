@@ -142,8 +142,12 @@ def generate_gle_arbitrary(K_array, dt, kBT, nsteps, N_trajs,
     K_padded = np.zeros(nfft)
     K_padded[:n_noise] = K_corr
     K_padded[nfft-n_noise+1:] = K_corr[1:][::-1]  # symmetric
-    S = np.abs(np.fft.rfft(K_padded))
-    S_sqrt = np.sqrt(np.maximum(S, 0) * dt)
+    # rfft of even-symmetric autocorrelation is real and non-negative:
+    # the discrete PSD's eigenvalues. Sampling η = irfft(sqrt(λ)*rfft(w))
+    # with white w of unit variance reproduces ⟨η[i]η[j]⟩ = C[|i-j|]
+    # = kBT·K(|i-j|·dt). No extra dt factor.
+    S = np.real(np.fft.rfft(K_padded))
+    S_sqrt = np.sqrt(np.maximum(S, 0))
 
     white = rng.normal(size=(N_trajs, nfft))
     white_fft = np.fft.rfft(white, axis=1)
