@@ -28,6 +28,7 @@ import matplotlib.pyplot as plt
 sys.path.insert(0, os.path.join(os.path.dirname(__file__),
                                 '../../kernel_extraction'))
 from benchmark_prony_nlsq import extract_kernel_prony
+from benchmark_extended_cases import generate_gle_multiexp
 
 SHOOT_DIR = os.path.join(os.path.dirname(__file__),
                          'gromacs_run/shooting_barrier')
@@ -87,40 +88,7 @@ def compute_mean_force(phi_list, ddot_list, nbins=36):
     return cs
 
 
-# ── GLE integrator (vectorized, OU noise + integrated memory) ────────────
-
-def generate_gle_butane(force_func, amp, tau_mem, kBT, dt, nsteps,
-                       N_trajs, x0, rng=None):
-    """1D GLE with K(t)=amp*exp(-t/τ), noise via OU FDT.
-
-    Returns x(N,T), v(N,T). amp is the kernel amplitude (K(0)=amp).
-    Friction integral γ_int = amp * tau_mem.
-    """
-    if rng is None:
-        rng = np.random.default_rng()
-
-    exp_decay = np.exp(-dt / tau_mem)
-    ou_noise_std = np.sqrt(kBT * (1 - exp_decay**2))
-    amp_sqrt = np.sqrt(amp)
-
-    x = np.zeros((N_trajs, nsteps))
-    v = np.zeros((N_trajs, nsteps))
-    s = np.zeros(N_trajs)
-    n_ou = rng.normal(0, np.sqrt(kBT), N_trajs)
-
-    x[:, 0] = x0
-    v[:, 0] = rng.normal(0, np.sqrt(kBT), N_trajs)
-
-    for i in range(nsteps - 1):
-        F = force_func(x[:, i])
-        mem = amp * s
-        noise = amp_sqrt * n_ou
-        v[:, i+1] = v[:, i] + dt * (F - mem + noise)
-        x[:, i+1] = x[:, i] + dt * v[:, i]
-        s = s * exp_decay + v[:, i] * dt
-        n_ou = n_ou * exp_decay + ou_noise_std * rng.normal(size=N_trajs)
-
-    return x, v
+# GLE integrator: reuses generate_gle_multiexp (one aux per exp term).
 
 
 def compute_reactive_flux(x, v, phi_barrier):
@@ -135,9 +103,12 @@ def compute_reactive_flux(x, v, phi_barrier):
 
 # ── Grote-Hynes (1-exp kernel) ────────────────────────────────────────────
 
-def grote_hynes_kappa(omega_b, amp, tau_mem):
+def grote_hynes_kappa(omega_b, amps, taus):
+    """κ_GH for K(t) = Σ aᵢ exp(-t/τᵢ); K̂(s) = Σ aᵢτᵢ/(1+τᵢs)."""
+    amps = np.atleast_1d(amps)
+    taus = np.atleast_1d(taus)
     def eq(lam):
-        Kh = amp * tau_mem / (1 + tau_mem * lam)
+        Kh = float(np.sum(amps * taus / (1 + taus * lam)))
         return lam - omega_b**2 / (lam + Kh)
     lam_r = scipy.optimize.brentq(eq, 1e-10, omega_b - 1e-10)
     return lam_r / omega_b
@@ -177,15 +148,16 @@ if __name__ == '__main__':
     res = extract_kernel_prony(
         x_sub, v_sub, a_sub, dt_e,
         t0_max_idx=0, tau_max_idx=tm,
-        force_func=force_full, n_exp=1, n_kernel=nk)
-    amp = res['amps'][0]
-    tau = res['taus'][0]
-    print(f"Prony fit: amp={amp:.1f} rad²/ps², τ={tau*1000:.0f} fs, "
-          f"γ_int={amp*tau:.2f} rad/ps")
+        force_func=force_full, n_exp=2, n_kernel=nk)
+    amps = np.array(res['amps'])
+    taus = np.array(res['taus'])
+    for i, (a, t) in enumerate(zip(amps, taus)):
+        print(f"  Prony exp {i}: amp={a:.1f} rad²/ps², τ={t*1000:.0f} fs, "
+              f"γᵢ={a*t:.2f} rad/ps")
+    print(f"  γ_int_total = {np.sum(amps*taus):.2f} rad/ps")
 
-    # κ_GH analytic
-    kap_gh = grote_hynes_kappa(omega_b, amp, tau)
-    print(f"κ_GH = {kap_gh:.3f}")
+    kap_gh = grote_hynes_kappa(omega_b, amps, taus)
+    print(f"κ_GH (2-exp) = {kap_gh:.3f}")
 
     # κ_RF (read from butane_rf_vs_kernel.py output)
     kap_rf = 0.250
@@ -193,25 +165,24 @@ if __name__ == '__main__':
     # ── Run GLE simulations ───────────────────────────────────────────────
     N_traj = 5000
     T_total = 5.0  # ps
-    dt_gle = min(0.0005, 0.1 * tau)  # well below tau
+    dt_gle = min(0.0005, 0.1 * float(taus.min()))
     nsteps = int(T_total / dt_gle) + 1
     print(f"\nGLE: N={N_traj}, T={T_total} ps, dt={dt_gle*1000:.2f} fs, "
           f"nsteps={nsteps}")
 
-    # Force closures
     force_harm = lambda x: omega_b**2 * (x - phi_b)
 
-    print("Running GLE with full anharmonic F(φ)...", flush=True)
+    print("Running GLE with full anharmonic F(φ), 2-exp kernel...", flush=True)
     rng = np.random.default_rng(42)
-    x_full, v_full = generate_gle_butane(
-        force_full, amp, tau, kBT_eff, dt_gle, nsteps, N_traj,
-        x0=phi_b, rng=rng)
+    x_full, v_full = generate_gle_multiexp(
+        amps.tolist(), taus.tolist(), kBT_eff, dt_gle, nsteps, N_traj,
+        x0=phi_b, rng=rng, force=force_full)
 
-    print("Running GLE with parabolic F(φ)...", flush=True)
+    print("Running GLE with parabolic F(φ), 2-exp kernel...", flush=True)
     rng = np.random.default_rng(43)
-    x_harm, v_harm = generate_gle_butane(
-        force_harm, amp, tau, kBT_eff, dt_gle, nsteps, N_traj,
-        x0=phi_b, rng=rng)
+    x_harm, v_harm = generate_gle_multiexp(
+        amps.tolist(), taus.tolist(), kBT_eff, dt_gle, nsteps, N_traj,
+        x0=phi_b, rng=rng, force=force_harm)
 
     # κ(t)
     # For harmonic case, "barrier" is at x0 = phi_b (the unstable max).
@@ -227,7 +198,7 @@ if __name__ == '__main__':
 
     np.savez('butane_gle_kappa.npz',
              t=t_gle, kappa_full=kap_full, kappa_harm=kap_harm,
-             omega_b=omega_b, amp=amp, tau=tau, kBT=kBT_eff,
+             omega_b=omega_b, amps=amps, taus=taus, kBT=kBT_eff,
              phi_barrier=phi_b,
              plateau_full=plat_full, plateau_harm=plat_harm,
              kap_rf=kap_rf, kap_gh=kap_gh)
