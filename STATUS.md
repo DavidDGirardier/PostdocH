@@ -1,6 +1,6 @@
 # Project status — butane dihedral barrier crossing
 
-Last updated: 2026-05-04. Working branch: `main` @ `87fd378+`.
+Last updated: 2026-05-04. Working branch: `main` @ `cf00da0+`.
 
 ## Physics question
 
@@ -11,18 +11,23 @@ is that the gap is **anharmonicity of the PMF at the barrier**, which the
 GH formula assumes parabolic. A 1D GLE simulation that uses the same
 memory kernel but the *full* anharmonic mean force should reproduce κ_RF.
 
-## Current numerical results (N = 663 barrier-top shoots)
+## Current numerical results (N = 663 barrier-top shoots, nbins=36, polyfit ω_b)
 
 | Quantity | Value | Comment |
 |---|---|---|
-| ω_b (barrier frequency) | 24.29 rad/ps | from `-d²U/dφ²` at φ_b |
+| ω_b (barrier frequency) | **24.16 rad/ps** | parabolic polyfit of PMF on \|Δφ\|<0.15 rad. Stable to binning (24.0–24.5 for nbins∈{24,36,48}; spline-derivative-at-φ_b is much noisier). |
 | kBT_eff = ⟨φ̇²⟩ | 30.29 rad²/ps² | initial-velocity variance at barrier |
-| φ_barrier (numpy convention) | 245.0° | eclipsed between trans and gauche+ |
+| φ_barrier (numpy convention) | 245.00° | shooting φ(0): mean=244.99°, std=3.14° (well-centered) |
+| K(0) (Free-LSQ) | 127–147 rad²/ps² | stride=1 → 127, stride=5 → 147 (FD-noise at small dt) |
+| γ_int = ∫K dt | 13.5–15.0 rad/ps | stride=1 → 13.5, stride=5 → 15.0; stable to ~10% |
 | κ_RF (MD plateau, 3–8 ps) | **0.250** | reactive flux from shooting trajectories |
-| κ_GH (analytic, 1-exp Prony) | 0.892 | Grote–Hynes self-consistency root |
-| κ_GH (analytic, 2-exp Prony) | 0.886 | barely changes |
-| κ_GLE_full (Free-LSQ K, anharm. F) | **0.241** | matches κ_RF within 4% |
-| κ_GLE_harm (Free-LSQ K, parabolic F) | 0.891 | matches κ_GH within 1% (sanity) |
+| κ_GH (analytic, polyfit ω_b) | 0.899 | Grote–Hynes self-consistency root (stride=5) |
+| κ_GLE_full (Free-LSQ K, anharm. F) | **0.241 / 0.223** | stride=5 / stride=1; matches κ_RF within ≈4% / 11% |
+| κ_GLE_harm (Free-LSQ K, parabolic F) | 0.889 | matches κ_GH within 1% (sanity) |
+
+The convergence figure (`butane_kappa_convergence.{png,pdf}`) is generated
+at stride=5; the single-shot value 0.223 in `butane_gle_kappa.{png,pdf}` is
+at stride=1. Both bracket κ_RF = 0.250 within ~10%.
 
 The parabolic-barrier check confirms the GLE integrator is correct;
 swapping the parabolic potential for the full anharmonic spline drops
@@ -68,6 +73,12 @@ kernel_extraction/
 2. **Anharmonicity is the dominant cause** of the κ_GH ≫ κ_RF gap.
 3. **Free-LSQ kernel is more robust than 2-exp Prony** at large N — Prony
    tends to invent unphysical 10-ps slow tails that bias κ_GLE upward.
+4. **ω_b extraction**: spline-derivative-at-φ_b is unstable to binning
+   (3.3 ↔ 25.9 across nbins∈{24..120}); narrow PMF polyfit is robust
+   (24.0–24.5 for nbins∈{24,36,48}, only 60-bin case dips to 20.6
+   from a local PMF artifact). Settled on nbins=36 polyfit → ω_b=24.2.
+5. **Stride sensitivity is mild**: κ_GLE moves by ≤0.04 between
+   stride ∈ {1, 5}; integrated friction γ_int stable to ~8%.
 
 ## Open / next
 

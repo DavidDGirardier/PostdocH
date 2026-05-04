@@ -137,24 +137,57 @@ $T = 5\,\ps$, $\Delta t_\mathrm{GLE} = 1\,\fs$, $N_\mathrm{traj} = 5000$.
 
 \section{Results}
 
-\subsection{Headline numbers (N = 663)}
+\subsection{Headline numbers (N = 663, nbins=36, polyfit $\omega_b$)}
 
 \begin{center}
-\begin{tabular}{lcc}
+\begin{tabular}{lccc}
 \toprule
 Method & $\kappa$ plateau & Comment \\
 \midrule
-$\kappa_\RF$ (MD shoots)             & $\mathbf{0.250}$ & reactive flux, 3--8\,\ps plateau \\
-$\kappa_\GH$ (Free-LSQ kernel)        & $0.899$           & analytic, eq.~(\ref{eq:gh}) \\
-$\kappa_\GLE^{\,\mathrm{harm}}$       & $0.891$           & parabolic $F$, sanity check \\
-$\kappa_\GLE^{\,\mathrm{anharm}}$     & $\mathbf{0.241}$ & full $F(\phi)$ spline \\
+$\kappa_\RF$ (MD shoots)             & $\mathbf{0.250}$       & reactive flux, 3--8\,\ps plateau \\
+$\kappa_\GH$ (Free-LSQ kernel)        & $0.899$                 & analytic, eq.~(\ref{eq:gh}) \\
+$\kappa_\GLE^{\,\mathrm{harm}}$       & $0.889$                 & parabolic $F$, sanity check \\
+$\kappa_\GLE^{\,\mathrm{anharm}}$     & $\mathbf{0.241/0.223}$  & full $F(\phi)$ spline (stride=5\,/\,1) \\
 \bottomrule
 \end{tabular}
 \end{center}
-The harmonic-barrier GLE reproduces the analytic $\kappa_\GH$ to
-within 1\,\%, validating the integrator and FDT noise scaling.
-Replacing the parabolic $F$ with the full anharmonic spline drops
-$\kappa$ from 0.89 to 0.24 --- recovering $\kappa_\RF$ within 4\,\%.
+The harmonic-barrier GLE reproduces the analytic $\kappa_\GH$ within
+1\,\%, validating the integrator and FDT noise scaling. Replacing the
+parabolic $F$ with the full anharmonic spline drops $\kappa$ from 0.90
+to ${\sim}0.23$ --- recovering $\kappa_\RF = 0.25$ within $\sim$5--10\,\%.
+The two anharmonic values bracket the result depending on the kernel
+sampling stride: stride=5 ($\Delta t_e = 10\,\fs$) is the value used
+throughout the convergence figure (Fig.~\ref{fig:conv}); stride=1
+($\Delta t_e = 2\,\fs$) gives a slightly lower $K(0)$ and a slightly
+more dissipative effective kernel.
+
+\paragraph{$\omega_b$ extraction.}
+The barrier curvature is obtained by a parabolic polyfit of the
+free-energy profile (from cumulative integration of the binned
+$\langle\ddot\phi\,|\,\phi\rangle$) on a narrow window
+$|\phi - \phi_b| < 0.15\,\rad$, giving $\omega_b = 24.2\,\rad/\ps$.
+This polyfit estimate is stable to the bin choice (24.0--24.5 for
+nbins\,$\in\{24,36,48\}$, only the 60-bin case dips to 20.6 from a
+local PMF artifact). The naive second-derivative-of-the-spline at
+$\phi_b$ is much less robust: it varies from 3.3 to 25.9 across the
+same range of bin counts, and was the source of an earlier inflation
+of $\kappa_\GH$.
+
+\paragraph{Stride sensitivity.}
+Subsampling the trajectories before the kernel extraction (stride 1, 2,
+5, 10 corresponding to $\Delta t_e = 2,\,4,\,10,\,20\,\fs$) shifts
+$K(0)$ by up to 25\,\% but the integrated friction $\gamma_\mathrm{int}
+= \int K\,dt$ only by $\sim 8\,\%$. Consequently $\kappa_\GLE$ moves by
+no more than $\pm 0.04$ across this range, which is within the
+$\kappa_\GLE/\kappa_\RF$ scatter at $N=663$.
+
+\paragraph{$\phi(0)$ centering.}
+The 663 accepted barrier-top trajectories have
+$\phi(0) = 244.99^\circ$ (target $\phi_b = 245.00^\circ$),
+$\sigma_{\phi(0)} = 3.14^\circ$, range $[236.3, 250.2]^\circ$ ---
+i.e.\ the shoots are tightly localised at the barrier, so any visual
+parabola misfit in earlier figures is a curvature-extraction issue,
+not a shooting-protocol issue.
 
 \subsection{Convergence with sample size}
 
