@@ -154,7 +154,7 @@ if __name__ == '__main__':
         ddot_list = [ddot_list[i] for i in idx]
         print(f"Subsampled to {len(phi_list)} trajectories for fitting")
 
-    cs_force = compute_mean_force(phi_list, ddot_list, nbins=60)
+    cs_force = compute_mean_force(phi_list, ddot_list, nbins=36)
     force_full = lambda x: cs_force(x)
 
     # Robust ω_b: parabolic polyfit of the PMF on a narrow window around φ_b.

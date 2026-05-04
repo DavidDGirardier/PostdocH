@@ -106,7 +106,7 @@ if __name__ == '__main__':
     N_full = len(phi_l)
     print(f"Loaded {N_full} trajectories")
 
-    cs_full = mean_force_spline(phi_l, ddot_l, nbins=60)
+    cs_full = mean_force_spline(phi_l, ddot_l, nbins=36)
     F_full = lambda x: cs_full(x)
     # Robust ω_b: polyfit of PMF on a narrow window around φ_b
     phi_grid_w = np.linspace(0, 2*np.pi, 2000)
