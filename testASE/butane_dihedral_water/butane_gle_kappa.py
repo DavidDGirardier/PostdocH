@@ -140,6 +140,8 @@ if __name__ == '__main__':
                              '(prony2 = 2 exp; free-lsq = numeric K(t))')
     parser.add_argument('--lsq-trunc-fs', type=float, default=500.0,
                         help='Truncation of free-LSQ kernel in fs')
+    parser.add_argument('--stride', type=int, default=5,
+                        help='Subsampling stride (1=2 fs, 5=10 fs, ...)')
     args = parser.parse_args()
 
     phi_list, phidot_list, ddot_list, dt_md, phi_b = load_shooting_data()
@@ -152,11 +154,20 @@ if __name__ == '__main__':
         ddot_list = [ddot_list[i] for i in idx]
         print(f"Subsampled to {len(phi_list)} trajectories for fitting")
 
-    cs_force = compute_mean_force(phi_list, ddot_list)
+    cs_force = compute_mean_force(phi_list, ddot_list, nbins=60)
     force_full = lambda x: cs_force(x)
-    V_pp = -cs_force(phi_b, 1)
-    omega_b = np.sqrt(abs(V_pp))
-    print(f"ω_b = {omega_b:.2f} rad/ps")
+
+    # Robust ω_b: parabolic polyfit of the PMF on a narrow window around φ_b.
+    # The spline derivative at a single point is too sensitive to bin choice.
+    phi_grid = np.linspace(0, 2*np.pi, 2000)
+    fe_grid = -np.cumsum(cs_force(phi_grid))*(phi_grid[1]-phi_grid[0])
+    fe_grid -= fe_grid.min()
+    narrow = abs(phi_grid - phi_b) < 0.15
+    poly = np.polyfit(phi_grid[narrow] - phi_b, fe_grid[narrow], 2)
+    omega_b = float(np.sqrt(abs(2*poly[0])))
+    omega_b_spline = float(np.sqrt(abs(-cs_force(phi_b, 1))))
+    print(f"ω_b (narrow polyfit) = {omega_b:.2f} rad/ps  "
+          f"(spline-derivative variant: {omega_b_spline:.2f})")
 
     # Effective kBT from initial-velocity variance of barrier shoots
     v0_arr = np.array([pd[0] for pd in phidot_list])
@@ -164,7 +175,7 @@ if __name__ == '__main__':
     print(f"kBT_eff = ⟨v0²⟩ = {kBT_eff:.2f} rad²/ps²")
 
     # Prony 1-exp kernel from MD shooting data (same protocol as butane_rf_vs_kernel.py)
-    stride = 5
+    stride = args.stride
     dt_e = dt_md * stride
     nk = max(10, int(1.0 / dt_e))
     tm = max(5, int(0.5 / dt_e))
