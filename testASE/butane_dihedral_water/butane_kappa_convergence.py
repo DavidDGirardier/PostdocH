@@ -106,11 +106,16 @@ if __name__ == '__main__':
     N_full = len(phi_l)
     print(f"Loaded {N_full} trajectories")
 
-    cs_full = mean_force_spline(phi_l, ddot_l)
+    cs_full = mean_force_spline(phi_l, ddot_l, nbins=60)
     F_full = lambda x: cs_full(x)
-    F_pp = -cs_full(phi_b, 1)
-    omega_b = float(np.sqrt(abs(F_pp)))
-    print(f"ω_b = {omega_b:.2f} rad/ps")
+    # Robust ω_b: polyfit of PMF on a narrow window around φ_b
+    phi_grid_w = np.linspace(0, 2*np.pi, 2000)
+    fe_w = -np.cumsum(cs_full(phi_grid_w))*(phi_grid_w[1]-phi_grid_w[0])
+    fe_w -= fe_w.min()
+    narrow = abs(phi_grid_w - phi_b) < 0.15
+    poly = np.polyfit(phi_grid_w[narrow] - phi_b, fe_w[narrow], 2)
+    omega_b = float(np.sqrt(abs(2*poly[0])))
+    print(f"ω_b (narrow polyfit) = {omega_b:.2f} rad/ps")
 
     v0_arr = np.array([pd[0] for pd in pdot_l])
     kBT_eff = float(np.var(v0_arr))
