@@ -6,7 +6,6 @@
 \usepackage{xcolor}
 \usepackage{hyperref}
 \usepackage[T1]{fontenc}
-\usepackage{microtype}
 \usepackage{listings}
 \hypersetup{colorlinks=true, urlcolor=blue!60!black, linkcolor=blue!60!black}
 
@@ -144,7 +143,7 @@ $T = 5\,\ps$, $\Delta t_\mathrm{GLE} = 1\,\fs$, $N_\mathrm{traj} = 5000$.
 \toprule
 Method & $\kappa$ plateau & Comment \\
 \midrule
-$\kappa_\RF$ (MD shoots)             & $\mathbf{0.250}$       & reactive flux, 3--8\,\ps plateau \\
+$\kappa_\RF$ (MD shoots)             & $\mathbf{0.250}$       & reactive flux, 3--8\,ps plateau \\
 $\kappa_\GH$ (Free-LSQ kernel)        & $0.899$                 & analytic, eq.~(\ref{eq:gh}) \\
 $\kappa_\GLE^{\,\mathrm{harm}}$       & $0.889$                 & parabolic $F$, sanity check \\
 $\kappa_\GLE^{\,\mathrm{anharm}}$     & $\mathbf{0.241/0.223}$  & full $F(\phi)$ spline (stride=5\,/\,1) \\
@@ -249,7 +248,7 @@ kernel_extraction/
 \section{Open questions}
 \begin{itemize}
 \item Compare the LSQ kernel against the equilibrium VolterraBasis kernel
-from the 40\,\ns unbiased run (plan 4, step 3).
+from the 40\,ns unbiased run (plan 4, step 3).
 \item Position-dependent kernel $K(\phi_0, t)$: existing
 \texttt{PositionalKernel\_fd.py} extracts $K(\phi, t)$ from the same
 shoots; not yet inserted into the GLE.
